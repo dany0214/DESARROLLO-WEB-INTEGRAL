@@ -15,10 +15,10 @@
         }
         
         .custom-tooltip {
-            /* Estilo por defecto (oculto) */
+
             visibility: hidden;
             opacity: 0;
-            /* Apariencia */
+
             background-color: #374151;
             color: #fff;
             text-align: center;
@@ -33,17 +33,14 @@
             top: 50%;
             left: 100%;
             transform: translate(15px, -50%);
-            /* Desplazar hacia la derecha y centrar */
-            /* Transición suave */
+
             transition: opacity 0.3s, visibility 0.3s;
         }
-        /* Regla para mostrar el tooltip al pasar el cursor (hover) */
         
         .fixed button:hover .custom-tooltip {
             visibility: visible;
             opacity: 1;
         }
-        /* Estilos para el fondo con el logo */
         
         body {
             background-color: #f7f7f7;
