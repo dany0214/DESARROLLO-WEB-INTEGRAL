@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body class="min-h-screen flex flex-col bg-gray-100" style="padding-top:70px;">
+
+    <header class="fixed top-0 left-0 w-full text-white shadow-lg" 
+            style="background: linear-gradient(to right, yellow,  #2563eb); z-index: 1030; height: 70px;">
+        <div class="w-full h-full flex items-center justify-between px-4 md:px-8">
+            <div class="flex items-center md:ms-24 gap-3">
+                <img src="Letras/logo.jpg" alt="Logo Mis Manos Hablarán" class="h-[45px] w-auto rounded-full border-2 border-white object-cover">
+                <a class="navbar-brand text-white fw-bold md:ms-24 text-xl md:text-2xl" href="introduccion_usuario.html" style="text-decoration: none;">
+                    Mis Manos Hablarán
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow flex items-center justify-center p-4">
+        <div class="w-full max-w-5xl flex justify-center items-center">
+            <div class="w-full flex flex-col lg:flex-row justify-center items-center lg:space-x-12">
+                <img src="Letras/logo_sin_fondo.png" class="side-logo hidden lg:block">
+
+                <div id="login-view" class="auth-card bg-white bg-opacity-90 p-6 md:p-8 rounded-xl shadow-2xl w-full max-w-sm">
+                    <h2>INICIO DE SESIÓN</h2>
+                    <div class="avatar-icon"></div>
+                    <form id="login-form">
+                        <div class="input-group">
+                            <span class="icon">👤</span>
+                            <input type="text" id="login-email" placeholder="Correo o Usuario" required>
+                        </div>
+                        <div class="input-group">
+                            <span class="icon">🔒</span>
+                            <input type="password" id="login-password" placeholder="Contraseña" required>
+                            <span class="icon toggle-eye" id="toggle-login-password">👁️</span>
+                        </div>
+                        <a class="forgot-link" id="open-forgot-modal">¿Olvidaste tu contraseña?</a>
+                        <button type="submit" class="auth-button">INICIAR SESIÓN</button>
+                    </form>
+                    <p class="switch-link">
+                        ¿No tienes cuenta? <a href="#" id="show-register">Regístrate aquí</a>
+                    </p>
+                    <p id="login-message" class="message-text"></p>
+                </div>
+
+                <div id="register-view" class="auth-card bg-white bg-opacity-90 p-6 md:p-8 rounded-xl shadow-2xl w-full max-w-sm hidden">
+                    <h2>REGISTRO</h2>
+                    <div class="avatar-icon-register">📝</div>
+                    <form id="register-form">
+                        <div class="input-group">
+                            <span class="icon">✏️</span>
+                            <input type="text" id="register-username" placeholder="Usuario" required>
+                        </div>
+                        <div class="input-group">
+                            <span class="icon">✉️</span>
+                            <input type="email" id="register-email" placeholder="Correo" required>
+                        </div>
+                        <div class="input-group">
+                            <span class="icon">🔒</span>
+                            <input type="password" id="register-password" placeholder="Contraseña" required>
+                            <span class="icon toggle-eye" id="toggle-register-password">👁️</span>
+                        </div>
+                        <ul id="password-rules">
+                            <li id="rule-length">❌ Mínimo 8 caracteres</li>
+                            <li id="rule-uppercase">❌ Una mayúscula</li>
+                            <li id="rule-number">❌ Un número</li>
+                            <li id="rule-special">❌ Un carácter especial</li>
+                        </ul>
+                        <button type="submit" class="auth-button">REGISTRARSE</button>
+                    </form>
+                    <p class="switch-link">
+                        ¿Ya tienes cuenta? <a href="#" id="show-login">Iniciar Sesión</a>
+                    </p>
+                    <p id="register-message" class="message-text"></p>
+                </div>
+
+                <img src="Letras/logo_sin_fondo.png" class="side-logo hidden lg:block">
+            </div>
+        </div>
+    </main>
+
+    <div id="forgot-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3>🔑 Recuperar Contraseña</h3>
+            <p>Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña.</p>
+            <div class="input-group">
+                <span class="icon">✉️</span>
+                <input type="email" id="forgot-email" placeholder="Tu correo registrado">
+            </div>
+            <p id="forgot-message" class="message-text"></p>
+            <button id="send-reset-btn" class="auth-button">ENVIAR CORREO</button>
+            <button id="close-forgot-modal" class="modal-cancel-btn">Cancelar</button>
+        </div>
+    </div>
+
+    <footer class="text-white py-4 mt-10 w-full" 
+        style="background: linear-gradient(to right,#2563eb, yellow);">
+        <div class="container-fluid px-4 md:px-20 flex flex-col md:flex-row justify-between items-center gap-4">
+            <p class="mb-0 font-semibold" style="color:black;">© 2026 Mis Manos Hablarán</p>
+            
+            
+            <button onclick="window.location.href='introduccion_usuario.html'" 
+                    class="bg-blue-600 text-white px-6 py-2 rounded-full shadow-md hover:bg-blue-700 transition font-bold text-sm">
+                Acerca de la app
+            </button>
+             <a href="opiniones.html" 
+           class="font-bold hover:underline"
+           style="color: black;">
+            Opiniones y sugerencias
+        </a>
+        </div>
+    </footer> 
+
+    <script type="module" src="app.js"></script>
+    <script src="fondo.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // Visibilidad Contraseña
+        function setupToggle(inputId, toggleId) {
+            const input = document.getElementById(inputId);
+            const toggle = document.getElementById(toggleId);
+            toggle.addEventListener('click', () => {
+                const type = input.type === 'password' ? 'text' : 'password';
+                input.type = type;
+                toggle.textContent = type === 'password' ? '👁️' : '🙈';
+            });
+        }
+        setupToggle('login-password', 'toggle-login-password');
+        setupToggle('register-password', 'toggle-register-password');
+
+        // Validación
+        const passwordInput = document.getElementById("register-password");
+        passwordInput.addEventListener("input", function() {
+            const value = passwordInput.value;
+            updateRule(document.getElementById("rule-length"), value.length >= 8, "Mínimo 8 caracteres");
+            updateRule(document.getElementById("rule-uppercase"), /[A-Z]/.test(value), "Una mayúscula");
+            updateRule(document.getElementById("rule-number"), /\d/.test(value), "Un número");
+            updateRule(document.getElementById("rule-special"), /[@$!%*#?&]/.test(value), "Un carácter especial");
+        });
+
+        function updateRule(element, valid, text) {
+            element.textContent = (valid ? "✅ " : "x ") + text;
+            element.style.color = valid ? "#10b981" : "#ef4444";
+        }
+
+        // Modal
+        const forgotModal = document.getElementById('forgot-modal');
+        document.getElementById('open-forgot-modal').addEventListener('click', (e) => {
+            e.preventDefault();
+            forgotModal.classList.remove('hidden');
+        });
+        document.getElementById('close-forgot-modal').addEventListener('click', () => {
+            forgotModal.classList.add('hidden');
+        });
+    </script>
+</body>
+</html>
