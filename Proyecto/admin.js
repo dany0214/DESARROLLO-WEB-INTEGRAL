@@ -2,7 +2,7 @@
 // admin.js  —  Firebase Auth + Firestore para usuarios.
 //              localStorage para gestión de contenido del muro.
 // ══════════════════════════════════════════════════════════════════
-
+//Hyadee Gomez 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import { getFirestore, collection, getDocs, doc, getDoc, deleteDoc, query, orderBy, limit}
     from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
