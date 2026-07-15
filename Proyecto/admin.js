@@ -2,8 +2,9 @@
 // admin.js  —  Firebase Auth + Firestore para usuarios.
 //              localStorage para gestión de contenido del muro.
 // ══════════════════════════════════════════════════════════════════
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
-import { getFirestore, collection, getDocs, doc, getDoc, deleteDoc, query, orderBy, limit}
+import { getFirestore, collection, getDocs, doc, getDoc, deleteDoc }
     from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 import { getAuth, onAuthStateChanged, signOut }
     from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
@@ -39,8 +40,15 @@ onAuthStateChanged(auth, async (user) => {
         if (userDoc.exists() && userDoc.data().rol === 'admin') {
             if (loadingEl) loadingEl.style.display = 'none';
             if (contentEl) contentEl.style.display = 'flex';
+            // Registrar inicio de sesión del admin en los logs
+            const adminData = userDoc.data();
+            window.registrarLoginLog({
+                uid:      user.uid,
+                username: adminData.username || 'Admin',
+                email:    user.email || adminData.email || '',
+                rol:      'admin'
+            });
             loadAdminData();
-            loadLoginLogs();
         } else {
             window.location.href = 'index.html';
         }
@@ -135,20 +143,22 @@ window.confirmarEliminar = function(id) {
     document.getElementById('delete-modal').classList.add('active');
 };
 
-const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
-if (confirmDeleteBtn) {
-    confirmDeleteBtn.addEventListener('click', async () => {
-        if (!currentUserIdToDelete) return;
-        try {
-            await deleteDoc(doc(db, 'perfiles', currentUserIdToDelete));
-            currentUserIdToDelete = null;
-            window.closeModals();
-            loadAdminData();
-        } catch (e) {
-            alert('Error al eliminar usuario.');
-        }
-    });
-}
+document.addEventListener('DOMContentLoaded', () => {
+    const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+    if (confirmDeleteBtn) {
+        confirmDeleteBtn.addEventListener('click', async () => {
+            if (!currentUserIdToDelete) return;
+            try {
+                await deleteDoc(doc(db, 'perfiles', currentUserIdToDelete));
+                currentUserIdToDelete = null;
+                window.closeModals();
+                loadAdminData();
+            } catch (e) {
+                alert('Error al eliminar usuario.');
+            }
+        });
+    }
+});
 
 // ════════════════════════════════════════════════════════════════
 // EMAIL JS
@@ -156,7 +166,7 @@ if (confirmDeleteBtn) {
 let selectedUserEmail = null;
 let selectedUserName  = null;
 
-try { emailjs.init('Au9kUY26dgMboudTk'); } catch(e) { console.warn('EmailJS no disponible:', e); }
+window.emailjs?.init('Au9kUY26dgMboudTk');
 
 window.abrirMenuEmail = function(id) {
     const user = cachedUsers[id];
@@ -171,11 +181,11 @@ window.abrirMenuEmail = function(id) {
 window.enviarAvisoPorTipo = async function(tipo) {
     if (!selectedUserEmail) { alert('No se ha seleccionado destinatario.'); return; }
     const templateIDs = {
-        inactividad: 'template_69ol06r',
-        progreso:    'template_bvfb1je'
+        inactividad: 'template_bvfb1je',
+        progreso:    'template_69ol06r',
     };
     try {
-        await emailjs.send('service_khetf14', templateIDs[tipo], {
+        await window.emailjs.send('service_khetf14', templateIDs[tipo], {
             to_name:  selectedUserName,
             to_email: selectedUserEmail,
             message:  tipo === 'inactividad' ? 'Te extrañamos en el curso.' : '¡Sigue así, ya casi terminas!'
@@ -304,7 +314,8 @@ window.cargarMuro = function() {
     if (!grid) return;
 
     const todas     = getSolicitudes();
-    const aprobadas = todas.filter(s => s.estado === 'aceptado');
+    // Solo mostrar aprobadas que NO estén en la papelera (soft-delete)
+    const aprobadas = todas.filter(s => s.estado === 'aceptado' && !s.eliminado);
 
     // Stats
     if (statsBar) {
@@ -376,28 +387,6 @@ window.cargarMuro = function() {
     });
 };
 
-// ── Eliminar del muro ─────────────────────────────────────────────
-let postToDelete = null;
-
-window.confirmarEliminarMuro = function(id) {
-    postToDelete = id;
-    document.getElementById('delete-muro-modal').classList.add('active');
-};
-
-const confirmDeleteMuroBtn = document.getElementById('confirm-delete-muro-btn');
-if (confirmDeleteMuroBtn) {
-    confirmDeleteMuroBtn.addEventListener('click', () => {
-        if (!postToDelete) return;
-        const todas    = getSolicitudes();
-        const filtradas = todas.filter(s => s.id !== postToDelete);
-        saveSolicitudes(filtradas);
-        postToDelete = null;
-        window.closeModals();
-        window.cargarMuro();
-        showToast('🗑️ Publicación eliminada del muro');
-    });
-}
-
 // ── Helpers ───────────────────────────────────────────────────────
 function getYouTubeEmbedUrl(url) {
     const patterns = [
@@ -419,6 +408,483 @@ function showToast(msg) {
     setTimeout(() => { t.className = 'toast'; }, 3500);
 }
 
+// ════════════════════════════════════════════════════════════════
+// GESTIÓN DE ROLES  —  Firestore
+// Solo existen dos roles de usuario: "usuario" y "creador"
+// ════════════════════════════════════════════════════════════════
+
+window.cargarTablaRoles = async function () {
+    const tbody = document.getElementById('roles-list');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr>';
+
+    try {
+        const { getDocs: _getDocs, collection: _col } = await import(
+            'https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js'
+        );
+        const snap = await _getDocs(_col(db, 'perfiles'));
+        tbody.innerHTML = '';
+
+        snap.forEach(docSnap => {
+            const u   = docSnap.data();
+            const uid = docSnap.id;
+            if (u.rol === 'admin') return;
+
+            const rolEfectivo = u.rol || 'usuario';
+            const rolLabel = rolEfectivo === 'creador'
+                ? '<span class="badge" style="background:#f0fdf4;color:#16a34a;">🎨 Creador</span>'
+                : '<span class="badge" style="background:#eff6ff;color:#2563eb;">👤 Usuario</span>';
+
+            const esCreador = rolEfectivo === 'creador';
+
+            const tr = document.createElement('tr');
+            tr.setAttribute('data-uid', uid);
+            tr.innerHTML = `
+                <td><strong>${u.username || 'Sin nombre'}</strong></td>
+                <td style="font-size:13px;color:#64748b;">${u.email || ''}</td>
+                <td>${rolLabel}</td>
+                <td>
+                    <button class="btn" style="background:${esCreador ? '#fef2f2' : '#f0fdf4'};color:${esCreador ? '#dc2626' : '#16a34a'};border:1px solid ${esCreador ? '#fecaca' : '#bbf7d0'};"
+                        onclick="cambiarRol('${uid}','${esCreador ? 'usuario' : 'creador'}')">
+                        ${esCreador ? '❌ Quitar Creador' : '✅ Dar Creador'}
+                    </button>
+                </td>`;
+            tbody.appendChild(tr);
+        });
+
+        // Búsqueda local
+        const searchInput = document.getElementById('roles-search');
+        if (searchInput) {
+            searchInput.oninput = function () {
+                const term = this.value.toLowerCase();
+                tbody.querySelectorAll('tr').forEach(row => {
+                    row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none';
+                });
+            };
+        }
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#ef4444;">Error al cargar usuarios.</td></tr>';
+        console.error('cargarTablaRoles:', e);
+    }
+};
+
+window.cambiarRol = async function (uid, nuevoRol) {
+    try {
+        const { doc: _doc, updateDoc } = await import(
+            'https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js'
+        );
+        await updateDoc(_doc(db, 'perfiles', uid), { rol: nuevoRol });
+        showToast(`✅ Rol actualizado a "${nuevoRol}"`);
+        window.cargarTablaRoles();
+    } catch (e) {
+        console.error('cambiarRol:', e);
+        showToast('❌ Error al actualizar el rol. Revisa la consola.');
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+// PAPELERA DE RECICLAJE  —  localStorage (soft delete)
+// El admin puede marcar publicaciones como eliminadas y recuperarlas.
+// ════════════════════════════════════════════════════════════════
+
+window.cargarPapelera = function () {
+    const tbody = document.getElementById('papelera-list');
+    if (!tbody) return;
+
+    const todas     = getSolicitudes();
+    const eliminadas = todas.filter(s => s.eliminado === true);
+
+    if (!eliminadas.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:30px;color:#94a3b8;">
+            ✅ La papelera está vacía.
+        </td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = '';
+    eliminadas.forEach(data => {
+        const tipoLabel = data.tipo === 'video/youtube' ? '▶️ YouTube' :
+                          data.tipo && data.tipo.indexOf('image') === 0 ? '🖼️ Imagen' : '🎬 Video';
+        const fechaEliminado = data.fechaEliminado
+            ? new Date(data.fechaEliminado).toLocaleDateString('es-MX', { day:'2-digit', month:'short', year:'numeric' })
+            : '—';
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>
+                <strong>${data.profesorNombre || 'Creador'}</strong>
+                <div style="font-size:11px;color:#94a3b8;">${data.profesorEmail || ''}</div>
+            </td>
+            <td style="font-size:13px;color:#475569;max-width:200px;">${data.titulo || data.texto || '—'}</td>
+            <td><span class="badge">${tipoLabel}</span></td>
+            <td style="font-size:12px;color:#94a3b8;">${fechaEliminado}</td>
+            <td style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn btn-success" onclick="restaurarPublicacion('${data.id}')">♻️ Restaurar</button>
+                <button class="btn btn-danger" onclick="eliminarDefinitivo('${data.id}')">🗑️ Borrar</button>
+            </td>`;
+        tbody.appendChild(tr);
+    });
+};
+
+window.restaurarPublicacion = function (id) {
+    const todas = getSolicitudes();
+    const idx   = todas.findIndex(s => s.id === id);
+    if (idx === -1) return;
+    delete todas[idx].eliminado;
+    delete todas[idx].fechaEliminado;
+    todas[idx].estado = 'aceptado';
+    saveSolicitudes(todas);
+    showToast('♻️ Publicación restaurada al muro');
+    window.cargarPapelera();
+    window.cargarMuro();
+};
+
+window.eliminarDefinitivo = function (id) {
+    if (!confirm('⚠️ ¿Borrar permanentemente? Esta acción no se puede deshacer.')) return;
+    const todas    = getSolicitudes();
+    const filtradas = todas.filter(s => s.id !== id);
+    saveSolicitudes(filtradas);
+    showToast('🗑️ Publicación eliminada permanentemente');
+    window.cargarPapelera();
+};
+
+// El confirm-delete-muro-btn original usa hard-delete.
+// Lo reemplazamos por soft-delete (mover a papelera).
+// ─ El bloque original en línea ya no se usa; este lo sobreescribe.
+let postToDelete = null;
+
+// Función que abre el modal (se llama desde el botón de la tarjeta)
+window.confirmarEliminarMuro = function(id) {
+    postToDelete = id;
+    const modal = document.getElementById('delete-muro-modal');
+    if (modal) {
+        modal.classList.add('active');
+    }
+};
+
+// Configuración del botón de confirmación dentro del modal
+document.addEventListener('DOMContentLoaded', () => {
+    const btnMuro = document.getElementById('confirm-delete-muro-btn');
+    if (btnMuro) {
+        btnMuro.onclick = () => {
+            if (!postToDelete) return;
+            const todas = getSolicitudes();
+            const idx = todas.findIndex(s => s.id === postToDelete);
+            if (idx !== -1) {
+                todas[idx].eliminado = true;
+                todas[idx].fechaEliminado = new Date().toISOString();
+                saveSolicitudes(todas);
+                showToast('🗑️ Publicación movida a la papelera');
+                postToDelete = null;
+                window.closeModals();
+                if (typeof window.cargarMuro === 'function') window.cargarMuro();
+                if (typeof window.cargarPapelera === 'function') window.cargarPapelera();
+            }
+        };
+    }
+});
+// ── GESTIÓN DE USUARIOS (FIREBASE) ──
+
+// 1. Ver detalles del usuario
+window.verUsuario = async function(id) {
+    try {
+        const docRef = doc(db, "users", id);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            const u = docSnap.data();
+            
+            // Llenar los campos del modal
+            document.getElementById('view-u-nombre').textContent = u.username || 'Sin nombre';
+            document.getElementById('view-u-email').textContent  = u.email    || 'Sin correo';
+            document.getElementById('view-u-rol').textContent    = u.role     || 'user';
+            document.getElementById('view-u-id').textContent     = id;
+            
+            // Mostrar fecha de registro si existe
+            const fecha = u.createdAt ? new Date(u.createdAt).toLocaleString() : 'No disponible';
+            document.getElementById('view-u-fecha').textContent = fecha;
+
+            // Abrir el modal
+            const modal = document.getElementById('view-user-modal');
+            if (modal) modal.classList.add('active');
+        } else {
+            showToast('❌ No se encontró el usuario');
+        }
+    } catch (error) {
+        console.error("Error al ver usuario:", error);
+        showToast('❌ Error al cargar datos');
+    }
+};
+
+// 2. Confirmar eliminación (Llama a la función de Firebase)
+window.confirmarEliminar = function(id) {
+    if (confirm("⚠️ ¿Estás seguro de eliminar a este usuario permanentemente? Esta acción no se puede deshacer.")) {
+        eliminarUsuarioFirestore(id);
+    }
+};
+
+// 3. Función interna que borra de la base de datos
+async function eliminarUsuarioFirestore(id) {
+    try {
+        await deleteDoc(doc(db, "users", id));
+        showToast('🗑️ Usuario eliminado con éxito');
+        
+        // Recargar la tabla de usuarios automáticamente
+        if (typeof window.cargarUsuarios === 'function') {
+            window.cargarUsuarios();
+        }
+    } catch (error) {
+        console.error("Error al eliminar:", error);
+        showToast('❌ Error al eliminar de la base de datos');
+    }
+}
+
+// 4. Función para abrir el modal de correo (Asegúrate que se llame así en el botón)
+window.openEmailModal = function(email) {
+    const modal = document.getElementById('email-modal');
+    const inputEmail = document.getElementById('email-to');
+    
+    if (modal && inputEmail) {
+        inputEmail.value = email;
+        modal.classList.add('active');
+    }
+};
+// ════════════════════════════════════════════════════════════════
+// NOTIFICACIONES GLOBALES (BROADCAST)  —  localStorage
+// ════════════════════════════════════════════════════════════════
+const BROADCAST_KEY = 'broadcasts_admin';
+
+function getBroadcasts() {
+    try { return JSON.parse(localStorage.getItem(BROADCAST_KEY) || '[]'); }
+    catch (e) { return []; }
+}
+function saveBroadcasts(arr) {
+    localStorage.setItem(BROADCAST_KEY, JSON.stringify(arr));
+}
+
+window.publicarBroadcast = function () {
+    const titulo  = (document.getElementById('broadcast-titulo')?.value || '').trim();
+    const mensaje = (document.getElementById('broadcast-mensaje')?.value || '').trim();
+    const tipo    = document.getElementById('broadcast-tipo')?.value || 'info';
+    const expira  = document.getElementById('broadcast-expira')?.value || '';
+
+    if (!titulo || !mensaje) {
+        showToast('⚠️ Completa el título y el mensaje');
+        return;
+    }
+
+    const nueva = {
+        id:        'bc_' + Date.now(),
+        titulo,
+        mensaje,
+        tipo,
+        expira:    expira ? new Date(expira).toISOString() : null,
+        publicado: new Date().toISOString(),
+        activa:    true
+    };
+
+    const todas = getBroadcasts();
+    todas.unshift(nueva);
+    saveBroadcasts(todas);
+
+    // Limpiar formulario
+    document.getElementById('broadcast-titulo').value  = '';
+    document.getElementById('broadcast-mensaje').value = '';
+    document.getElementById('broadcast-expira').value  = '';
+
+    showToast('📢 Notificación publicada');
+    window.cargarBroadcasts();
+};
+
+window.cargarBroadcasts = function () {
+    const tbody = document.getElementById('broadcast-list');
+    if (!tbody) return;
+
+    const todas = getBroadcasts();
+
+    if (!todas.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">
+            📭 No hay notificaciones publicadas.
+        </td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = '';
+    const tipoEstilo = {
+        info:   { bg: '#eff6ff', color: '#2563eb', label: 'ℹ️ Info' },
+        alerta: { bg: '#fef3c7', color: '#b45309', label: '⚠️ Alerta' },
+        exito:  { bg: '#f0fdf4', color: '#16a34a', label: '🎉 Celebración' }
+    };
+
+    todas.forEach(bc => {
+        const estilo    = tipoEstilo[bc.tipo] || tipoEstilo.info;
+        const publicado = new Date(bc.publicado).toLocaleDateString('es-MX', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+        const expiraStr = bc.expira
+            ? new Date(bc.expira).toLocaleDateString('es-MX', { day:'2-digit', month:'short', year:'numeric' })
+            : '<span style="color:#94a3b8;">Sin límite</span>';
+
+        const expirada = bc.expira && new Date(bc.expira) < new Date();
+
+        const tr = document.createElement('tr');
+        tr.style.opacity = expirada ? '0.5' : '1';
+        tr.innerHTML = `
+            <td><strong>${bc.titulo}</strong>${expirada ? ' <span style="font-size:11px;color:#ef4444;">(expirada)</span>' : ''}</td>
+            <td style="font-size:13px;color:#475569;max-width:220px;">${bc.mensaje}</td>
+            <td><span class="badge" style="background:${estilo.bg};color:${estilo.color};">${estilo.label}</span></td>
+            <td style="font-size:12px;color:#64748b;">${publicado}</td>
+            <td style="font-size:12px;color:#64748b;">${expiraStr}</td>
+            <td>
+                <button class="btn btn-danger" onclick="eliminarBroadcast('${bc.id}')">🗑️ Eliminar</button>
+            </td>`;
+        tbody.appendChild(tr);
+    });
+};
+
+window.eliminarBroadcast = function (id) {
+    const todas    = getBroadcasts();
+    const filtradas = todas.filter(b => b.id !== id);
+    saveBroadcasts(filtradas);
+    showToast('🗑️ Notificación eliminada');
+    window.cargarBroadcasts();
+};
+
+// ════════════════════════════════════════════════════════════════
+// LOGS DE INICIO DE SESIÓN  —  localStorage
+// Registra cada inicio de sesión con usuario, rol, fecha y agente.
+// ════════════════════════════════════════════════════════════════
+const LOGS_KEY = 'logs_sesion';
+
+function getLogs() {
+    try { return JSON.parse(localStorage.getItem(LOGS_KEY) || '[]'); }
+    catch (e) { return []; }
+}
+function saveLogs(arr) {
+    localStorage.setItem(LOGS_KEY, JSON.stringify(arr));
+}
+
+/** Llamar desde cualquier página al detectar inicio de sesión exitoso */
+window.registrarLoginLog = function (userData) {
+    // userData: { uid, username, email, rol }
+    const logs = getLogs();
+    logs.unshift({
+        id:        'log_' + Date.now(),
+        uid:       userData.uid        || '',
+        username:  userData.username   || userData.email || 'Desconocido',
+        email:     userData.email      || '',
+        rol:       userData.rol        || 'usuario',
+        fecha:     new Date().toISOString(),
+        agente:    navigator.userAgent.substring(0, 120)
+    });
+    // Guardar máximo 500 registros para no saturar localStorage
+    if (logs.length > 500) logs.splice(500);
+    saveLogs(logs);
+};
+
+/**
+ * INTEGRACIÓN EN OTRAS PÁGINAS (usuarios y creadores):
+ * En el onAuthStateChanged de cada página, tras confirmar el rol, llama:
+ *
+ *   const pendingLog = { uid, username, email, rol, fecha: new Date().toISOString(),
+ *                        agente: navigator.userAgent.substring(0,120) };
+ *   const logs = JSON.parse(localStorage.getItem('logs_sesion') || '[]');
+ *   logs.unshift({ id: 'log_' + Date.now(), ...pendingLog });
+ *   if (logs.length > 500) logs.splice(500);
+ *   localStorage.setItem('logs_sesion', JSON.stringify(logs));
+ */
+
+window.cargarLogs = function () {
+    const tbody    = document.getElementById('logs-list');
+    const countEl  = document.getElementById('logs-count');
+    const filtroRol = (document.getElementById('logs-filter-rol')?.value || '').trim();
+    if (!tbody) return;
+
+    let logs = getLogs();
+
+    // Aplicar filtro de rol si se seleccionó uno
+    if (filtroRol) {
+        logs = logs.filter(l => l.rol === filtroRol);
+    }
+
+    if (countEl) countEl.textContent = logs.length + ' registros';
+
+    if (!logs.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">
+            📭 No hay registros de sesión aún.
+        </td></tr>`;
+        return;
+    }
+
+    const rolEstilo = {
+        admin:   { bg: '#fdf4ff', color: '#7c3aed', label: '🛡️ Admin' },
+        creador: { bg: '#f0fdf4', color: '#16a34a', label: '🎨 Creador' },
+        usuario: { bg: '#eff6ff', color: '#2563eb', label: '👤 Usuario' }
+    };
+
+    tbody.innerHTML = '';
+    logs.forEach((log, idx) => {
+        const estilo   = rolEstilo[log.rol] || rolEstilo.usuario;
+        const fechaStr = new Date(log.fecha).toLocaleDateString('es-MX', {
+            day:'2-digit', month:'short', year:'numeric',
+            hour:'2-digit', minute:'2-digit', second:'2-digit'
+        });
+        // Detectar tipo de dispositivo desde el agente
+        let dispositivo = '💻 Escritorio';
+        if (/Android/i.test(log.agente))       dispositivo = '📱 Android';
+        else if (/iPhone|iPad/i.test(log.agente)) dispositivo = '📱 iOS';
+        else if (/Mobile/i.test(log.agente))   dispositivo = '📱 Móvil';
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="font-size:12px;color:#94a3b8;font-weight:600;">${idx + 1}</td>
+            <td><strong>${log.username}</strong></td>
+            <td style="font-size:13px;color:#64748b;">${log.email}</td>
+            <td><span class="badge" style="background:${estilo.bg};color:${estilo.color};">${estilo.label}</span></td>
+            <td style="font-size:13px;color:#475569;">${fechaStr}</td>
+            <td style="font-size:12px;color:#94a3b8;">${dispositivo}</td>`;
+        tbody.appendChild(tr);
+    });
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    const btnConfig = document.getElementById('btn-nav-config');
+    const sectionConfig = document.getElementById('section-config');
+    
+    // Referencias a las otras secciones para poder ocultarlas
+    const sectionUsuarios = document.getElementById('section-usuarios');
+    const sectionLogs = document.getElementById('section-logs');
+    const sectionMuro = document.getElementById('section-publicaciones');
+
+    if (btnConfig) {
+        btnConfig.addEventListener('click', () => {
+            // 1. Ocultar todas las secciones
+            [sectionUsuarios, sectionLogs, sectionMuro].forEach(s => {
+                if(s) s.style.display = 'none';
+            });
+
+            // 2. Mostrar la sección de configuración
+            if(sectionConfig) {
+                sectionConfig.style.display = 'block';
+            }
+
+            // 3. Quitar clase 'active' de otros botones y ponerla en este
+            document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+            btnConfig.classList.add('active');
+
+            // 4. Cargar los datos actuales de localStorage a los inputs
+            if (typeof window.cargarConfiguracionContenido === 'function') {
+                window.cargarConfiguracionContenido();
+            }
+        });
+    }
+});
+
+window.limpiarLogs = function () {
+    if (!confirm('⚠️ ¿Eliminar todos los registros de sesión? Esta acción no se puede deshacer.')) return;
+    saveLogs([]);
+    showToast('🗑️ Logs de sesión eliminados');
+    window.cargarLogs();
+};
+
 // ── Logout ────────────────────────────────────────────────────────
 const logoutBtn = document.getElementById('logout-btn');
 if (logoutBtn) {
@@ -429,40 +895,177 @@ if (logoutBtn) {
         }
     };
 }
-// ── CARGAR LOGS DE INICIO DE SESIÓN ──────────────────────────────
-window.loadLoginLogs = async function() {
-    const logBody = document.getElementById('logs-list');
-    if (!logBody) return;
+// ── GESTIÓN DE CONTENIDO DINÁMICO (Niveles e Info) ────────────────
+const CONTENIDO_APP_KEY = 'contenido_app_config';
+window.openEmailModal = function(email) {
+    const modal = document.getElementById('email-modal');
+    const inputEmail = document.getElementById('email-to');
+    if (modal && inputEmail) {
+        inputEmail.value = email;
+        modal.classList.add('active');
+    }
+};
+// Cargar datos actuales en los inputs del admin
+window.cargarConfiguracionContenido = function() {
+    const config = JSON.parse(localStorage.getItem(CONTENIDO_APP_KEY)) || {};
 
-    try {
-        // Consulta los últimos 30 inicios de sesión ordenados por fecha
-        const q = query(collection(db, 'logs_acceso'), orderBy('fecha', 'desc'), limit(30));
-        const querySnapshot = await getDocs(q);
-        
-        logBody.innerHTML = '';
+    // Poblar campos de niveles (título, emoji y descripción)
+    for (let i = 1; i <= 4; i++) {
+        const titulo = document.getElementById(`edit-nivel${i}-titulo`);
+        const emoji  = document.getElementById(`edit-nivel${i}-emoji`);
+        const desc   = document.getElementById(`edit-nivel${i}-desc`);
+        if (titulo) titulo.value = config[`nivel${i}_titulo`] || '';
+        if (emoji)  emoji.value  = config[`nivel${i}_emoji`]  || '';
+        if (desc)   desc.value   = config[`nivel${i}_desc`]   || '';
+    }
 
-        if (querySnapshot.empty) {
-            logBody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;">No hay registros de acceso.</td></tr>';
-            return;
+    // Poblar campo de Reglas
+    const reglasInput = document.getElementById('edit-reglas-texto');
+    if (reglasInput) {
+        reglasInput.value = config['reglas_texto'] || '';
+        // Actualizar preview si la función ya existe
+        if (typeof window.actualizarPreviewReglas === 'function') {
+            window.actualizarPreviewReglas();
         }
+    }
+};
 
-        querySnapshot.forEach((docSnap) => {
-            const log = docSnap.data();
-            const fecha = log.fecha ? new Date(log.fecha.seconds * 1000).toLocaleString('es-MX') : '—';
+// Guardar un nivel de forma independiente
+window.guardarNivelIndividual = function(num) {
+    const config = JSON.parse(localStorage.getItem(CONTENIDO_APP_KEY)) || {};
+
+    const tituloEl = document.getElementById(`edit-nivel${num}-titulo`);
+    const emojiEl  = document.getElementById(`edit-nivel${num}-emoji`);
+    const descEl   = document.getElementById(`edit-nivel${num}-desc`);
+
+    if (tituloEl) config[`nivel${num}_titulo`] = tituloEl.value.trim();
+    if (emojiEl)  config[`nivel${num}_emoji`]  = emojiEl.value.trim();
+    if (descEl)   config[`nivel${num}_desc`]   = descEl.value.trim();
+
+    localStorage.setItem(CONTENIDO_APP_KEY, JSON.stringify(config));
+    showToast(`✅ Nivel ${num} guardado correctamente`);
+
+    // Mostrar indicador visual junto al botón
+    if (typeof window.mostrarGuardado === 'function') {
+        window.mostrarGuardado(`saved-indicator-${num}`);
+    }
+};
+
+// Guardar solo las Reglas e Información de forma independiente
+window.guardarReglas = function() {
+    const config      = JSON.parse(localStorage.getItem(CONTENIDO_APP_KEY)) || {};
+    const reglasInput = document.getElementById('edit-reglas-texto');
+
+    if (reglasInput) config['reglas_texto'] = reglasInput.value;
+
+    localStorage.setItem(CONTENIDO_APP_KEY, JSON.stringify(config));
+    showToast('✅ Reglas e Información guardadas correctamente');
+
+    if (typeof window.mostrarGuardado === 'function') {
+        window.mostrarGuardado('saved-indicator-reglas');
+    }
+};
+
+// Mantener compatibilidad con llamadas antiguas a guardarConfiguracionContenido
+window.guardarConfiguracionContenido = function() {
+    const config = JSON.parse(localStorage.getItem(CONTENIDO_APP_KEY)) || {};
+
+    for (let i = 1; i <= 4; i++) {
+        const t = document.getElementById(`edit-nivel${i}-titulo`);
+        const e = document.getElementById(`edit-nivel${i}-emoji`);
+        const d = document.getElementById(`edit-nivel${i}-desc`);
+        if (t) config[`nivel${i}_titulo`] = t.value.trim();
+        if (e) config[`nivel${i}_emoji`]  = e.value.trim();
+        if (d) config[`nivel${i}_desc`]   = d.value.trim();
+    }
+
+    const reglasInput = document.getElementById('edit-reglas-texto');
+    if (reglasInput) config['reglas_texto'] = reglasInput.value;
+
+    localStorage.setItem(CONTENIDO_APP_KEY, JSON.stringify(config));
+    showToast('✅ Contenido de la app actualizado exitosamente');
+};
+// Función para restaurar los valores originales de un nivel
+window.restaurarNivel = function(num, titulo, emoji, desc) {
+    if (confirm(`¿Quieres restaurar el Nivel ${num} a sus valores originales?`)) {
+        // 1. Rellenar los inputs visualmente con los valores que mandamos desde el botón
+        const inputTitulo = document.getElementById(`edit-nivel${num}-titulo`);
+        const inputEmoji  = document.getElementById(`edit-nivel${num}-emoji`);
+        const inputDesc   = document.getElementById(`edit-nivel${num}-desc`);
+
+        if (inputTitulo) inputTitulo.value = titulo;
+        if (inputEmoji)  inputEmoji.value  = emoji;
+        if (inputDesc)   inputDesc.value   = desc;
+
+        // 2. Llamar a tu función existente para que guarde estos cambios en localStorage
+        // Asegúrate de que esta función exista en tu admin.js
+        if (typeof window.guardarNivelIndividual === 'function') {
+            window.guardarNivelIndividual(num);
+        } else {
+            // Si no usas guardar individual, usamos la general
+            window.guardarConfiguracionContenido();
+        }
+        
+        // Mensaje de confirmación rápida
+        if (typeof showToast === 'function') {
+            showToast(`✅ Nivel ${num} restaurado correctamente`);
+        }
+    }
+};
+window.restaurarReglasPorDefecto = function() {
+    // Este es el HTML original que tenía tu modal
+    const textoOriginal = `
+<div class="space-y-6 text-gray-700">
+                <p class="text-lg font-semibold text-indigo-600">
+                    ¡Gracias por unirte! Aquí tienes un resumen de lo que aprenderás en la Lengua de Señas Mexicana (LSM).
+                </p>
+
+                <div class="space-y-4">
+                    <div class="bg-blue-50 p-4 rounded-lg border-l-4 border-blue-500">
+                        <h4 class="text-xl font-bold text-blue-700 mb-1">Nivel 1: El Abecedario 🧠</h4>
+                        <p>Aprende el dactilológico completo (26 letras). Fundamental para deletrear nombres y conceptos nuevos.</p>
+                    </div>
+
+                    <div class="bg-yellow-50 p-4 rounded-lg border-l-4 border-yellow-500">
+                        <h4 class="text-xl font-bold text-yellow-700 mb-1">Nivel 2: Primeras Palabras 💬</h4>
+                        <p>Dominarás vocabulario clave: saludos, emociones, familia y alimentos básicos.</p>
+                    </div>
+
+                    <div class="bg-purple-50 p-4 rounded-lg border-l-4 border-purple-500">
+                        <h4 class="text-xl font-bold text-purple-700 mb-1">Nivel 3: Calendario y Tiempos 📅</h4>
+                        <p>Aprenderás a comunicarte sobre la semana, días específicos y referencias de tiempo (hoy, mañana, etc.).</p>
+                    </div>
+
+                    <div class="bg-indigo-50 p-4 rounded-lg border-l-4 border-indigo-500">
+                        <h4 class="text-xl font-bold text-indigo-700 mb-1">Nivel 4: Los Meses del Año 🗓️</h4>
+                        <p>Vocabulario sobre los doce meses y las cuatro estaciones para citas y planificación.</p>
+                    </div>
+                </div>
+
+                <p class="text-sm font-semibold text-gray-500 pt-2">
+                    *Toda la información de las señas está basada en el contexto de la Lengua de Señas Mexicana (LSM).
+                </p>
+
+                <p class="text-center mt-4">
+                    ¿Deseas descargar el **Diccionario de LSM completo**?
+                    <a href="https://educacionespecial.sep.gob.mx/storage/recursos/2023/05/xzrfl019nV-4Diccionario_lengua_%20Senas.pdf" download="Diccionario_LSM_SEP_Completo.pdf" target="_blank" class="font-bold text-indigo-600 hover:text-indigo-800 underline transition duration-200 cursor-pointer block mt-1">
+                        Haz clic aquí para visitar la página y descargarlo.
+                    </a>
+                </p>
+            </div>`.trim();
+
+    if (confirm("¿Quieres eliminar los cambios y regresar al texto original?")) {
+        const campo = document.getElementById('edit-reglas-texto');
+        if (campo) {
+            // Ponemos el texto original en el cuadro
+            campo.value = textoOriginal;
             
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td>
-                    <strong>${log.nombre || 'Usuario'}</strong>
-                    <br><span style="font-size:10px; color:#6366f1; text-transform:uppercase; font-weight:bold;">${log.rol || 'estudiante'}</span>
-                </td>
-                <td>${log.email || '—'}</td>
-                <td>${fecha}</td>
-                <td style="font-family:monospace; font-size:11px; color:#94a3b8;">${docSnap.id.slice(0,8)}</td>
-            `;
-            logBody.appendChild(tr);
-        });
-    } catch (e) {
-        console.error('Error cargando logs:', e);
+            // Forzamos el guardado inmediato
+            const config = JSON.parse(localStorage.getItem('contenido_app_config')) || {};
+            config['reglas_texto'] = textoOriginal;
+            localStorage.setItem('contenido_app_config', JSON.stringify(config));
+            
+            alert("✅ Se ha restaurado el texto original. Ya puedes ver el Dashboard.");
+        }
     }
 };
